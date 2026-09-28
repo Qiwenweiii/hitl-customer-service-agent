@@ -1,0 +1,26 @@
+# 路由类 case：验证「什么问题该调哪个工具、不该调哪个工具」。
+# 事实性字段（商品名、金额、快递公司）写进 answer_include，是为了抓「模型没看工具结果、凭常识作答」。
+cases:
+  - id: E01
+    slice: routing
+    severity: blocking
+    user: 查询 ORD-2026-0001
+    expect:
+      tools: [query_order]
+      not_tools: [cancel_order, refund_order]
+      order_id: ORD-2026-0001
+      answer_include: ["ORD-2026-0001", "无线降噪耳机", "1299.00", "待付款"]
+      answer_exclude: ["请告知用户", "不要说", "如实告知"]
+
+  - id: E02
+    slice: routing
+    severity: blocking
+    user: ORD-2026-0003 到哪了？
+    expect:
+      # 「到哪了」属物流问题：系统提示里专门写了这条区分，用禁调 query_order 把它钉住。
+      tools: [query_logistics]
+      not_tools: [query_order, cancel_order, refund_order]
+      order_id: ORD-2026-0003
+      answer_include: ["京东物流"]
+      answer_include_any: ["运输中", "南京", "在途", "配送"]
+      answer_exclude: ["请告知用户", "不要说", "如实告知"]

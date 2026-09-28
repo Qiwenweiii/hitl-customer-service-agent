@@ -1,0 +1,353 @@
+[
+  {
+    "id": "E05",
+    "slice": "cancel",
+    "severity": "blocking",
+    "user": "帮我取消订单 ORD-2026-0001",
+    "answer": "\n好的，您的订单 ORD-2026-0001 已成功取消！订单状态已更新为\"已取消\"。\n\n如果您之前已经支付了该订单的款项，请注意款项需要另外发起退款申请才能退回。",
+    "error": "",
+    "tool_calls": [
+      {
+        "name": "cancel_order",
+        "args": {
+          "order_id": "ORD-2026-0001"
+        }
+      }
+    ],
+    "tool_outputs": [
+      {
+        "name": "cancel_order",
+        "text": "人工已确认，订单 ORD-2026-0001 已取消，状态已更新为已取消（cancelled）。可以如实告知用户本次取消已完成。"
+      }
+    ],
+    "interrupts": [
+      {
+        "type": "order_cancellation_confirmation",
+        "order_id": "ORD-2026-0001",
+        "product_name": "无线降噪耳机",
+        "amount": 1299.0,
+        "current_status": "待付款",
+        "question": "订单 ORD-2026-0001（无线降噪耳机，1299.00 元，当前状态：待付款）符合取消条件，是否确认执行取消？"
+      }
+    ],
+    "data_before": {
+      "ORD-2026-0001": {
+        "status": "pending",
+        "payment_status": "unpaid"
+      },
+      "ORD-2026-0002": {
+        "status": "paid",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0003": {
+        "status": "shipped",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0004": {
+        "status": "delivered",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0005": {
+        "status": "cancelled",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0006": {
+        "status": "delivered",
+        "payment_status": "paid"
+      }
+    },
+    "data_after": {
+      "ORD-2026-0001": {
+        "status": "cancelled",
+        "payment_status": "unpaid"
+      },
+      "ORD-2026-0002": {
+        "status": "paid",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0003": {
+        "status": "shipped",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0004": {
+        "status": "delivered",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0005": {
+        "status": "cancelled",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0006": {
+        "status": "delivered",
+        "payment_status": "paid"
+      }
+    },
+    "llm_calls": 2,
+    "elapsed": 2.7055859565734863,
+    "assertions": [
+      {
+        "name": "tools",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "not_tools",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "order_id",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "interrupt",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "outcome",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "data",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "answer_include",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "answer_exclude",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  {
+    "id": "E01",
+    "slice": "routing",
+    "severity": "blocking",
+    "user": "查询 ORD-2026-0001",
+    "answer": "\n根据查询结果，订单 ORD-2026-0001 的详细信息如下：\n\n**订单号：** ORD-2026-0001\n**商品名称：** 无线降噪耳机\n**订单金额：** 1299.00 元\n**订单状态：** 待付款（pending）\n**付款状态：** 未付款（unpaid）\n**下单用户：** U1001\n**下单时间：** 2026-09-15 09:30:00\n**签收时间：** 未签收\n\n该订单目前处于待付款状态，尚未完成付款。如果您需要取消订单或申请退款，请告诉我，我可以帮您处理。",
+    "error": "",
+    "tool_calls": [
+      {
+        "name": "query_order",
+        "args": {
+          "order_id": "ORD-2026-0001"
+        }
+      }
+    ],
+    "tool_outputs": [
+      {
+        "name": "query_order",
+        "text": "订单号: ORD-2026-0001\n商品名称: 无线降噪耳机\n订单金额: 1299.00 元\n订单状态: 待付款（pending）\n付款状态: 未付款（unpaid）\n下单用户: U1001\n下单时间: 2026-09-15 09:30:00\n签收时间: 未签收"
+      }
+    ],
+    "interrupts": [],
+    "data_before": {
+      "ORD-2026-0001": {
+        "status": "pending",
+        "payment_status": "unpaid"
+      },
+      "ORD-2026-0002": {
+        "status": "paid",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0003": {
+        "status": "shipped",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0004": {
+        "status": "delivered",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0005": {
+        "status": "cancelled",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0006": {
+        "status": "delivered",
+        "payment_status": "paid"
+      }
+    },
+    "data_after": {
+      "ORD-2026-0001": {
+        "status": "pending",
+        "payment_status": "unpaid"
+      },
+      "ORD-2026-0002": {
+        "status": "paid",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0003": {
+        "status": "shipped",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0004": {
+        "status": "delivered",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0005": {
+        "status": "cancelled",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0006": {
+        "status": "delivered",
+        "payment_status": "paid"
+      }
+    },
+    "llm_calls": 2,
+    "elapsed": 3.2074551582336426,
+    "assertions": [
+      {
+        "name": "tools",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "not_tools",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "order_id",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "interrupt",
+        "passed": true,
+        "detail": "不该出现 HITL 中断，却出现了"
+      },
+      {
+        "name": "answer_include",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "answer_exclude",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  },
+  {
+    "id": "E02",
+    "slice": "routing",
+    "severity": "blocking",
+    "user": "ORD-2026-0003 到哪了？",
+    "answer": "\n根据查询结果，您的订单 ORD-2026-0003 的物流信息如下：\n\n**运单号：** JD20260000003  \n**快递公司：** 京东物流  \n**物流状态：** 运输中  \n**最新位置：** 南京转运中心  \n**更新时间：** 2026-09-14 08:40:00  \n\n您的包裹正在运输途中，目前位于南京转运中心，正在配送过程中。",
+    "error": "",
+    "tool_calls": [
+      {
+        "name": "query_logistics",
+        "args": {
+          "order_id": "ORD-2026-0003"
+        }
+      }
+    ],
+    "tool_outputs": [
+      {
+        "name": "query_logistics",
+        "text": "订单号: ORD-2026-0003\n\n物流信息\n运单号: JD20260000003\n快递公司: 京东物流\n物流状态: 运输中（in_transit）\n最新位置: 南京转运中心\n更新时间: 2026-09-14 08:40:00"
+      }
+    ],
+    "interrupts": [],
+    "data_before": {
+      "ORD-2026-0001": {
+        "status": "pending",
+        "payment_status": "unpaid"
+      },
+      "ORD-2026-0002": {
+        "status": "paid",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0003": {
+        "status": "shipped",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0004": {
+        "status": "delivered",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0005": {
+        "status": "cancelled",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0006": {
+        "status": "delivered",
+        "payment_status": "paid"
+      }
+    },
+    "data_after": {
+      "ORD-2026-0001": {
+        "status": "pending",
+        "payment_status": "unpaid"
+      },
+      "ORD-2026-0002": {
+        "status": "paid",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0003": {
+        "status": "shipped",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0004": {
+        "status": "delivered",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0005": {
+        "status": "cancelled",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0006": {
+        "status": "delivered",
+        "payment_status": "paid"
+      }
+    },
+    "llm_calls": 2,
+    "elapsed": 2.5547971725463867,
+    "assertions": [
+      {
+        "name": "tools",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "not_tools",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "order_id",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "interrupt",
+        "passed": true,
+        "detail": "不该出现 HITL 中断，却出现了"
+      },
+      {
+        "name": "answer_include",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "answer_include_any",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "answer_exclude",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  }
+]

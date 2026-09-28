@@ -1,0 +1,111 @@
+[
+  {
+    "id": "E01",
+    "slice": "routing",
+    "severity": "blocking",
+    "user": "查询 ORD-2026-0001",
+    "answer": "\n根据查询结果，订单 ORD-2026-0001 的详细信息如下：\n\n**订单号：** ORD-2026-0001\n**商品名称：** 无线降噪耳机\n**订单金额：** 1299.00 元\n**订单状态：** 待付款（pending）\n**付款状态：** 未付款（unpaid）\n**下单用户：** U1001\n**下单时间：** 2026-09-15 09:30:00\n**签收时间：** 未签收\n\n该订单目前处于待付款状态，尚未完成付款。",
+    "error": "",
+    "tool_calls": [
+      {
+        "name": "query_order",
+        "args": {
+          "order_id": "ORD-2026-0001"
+        }
+      }
+    ],
+    "tool_outputs": [
+      {
+        "name": "query_order",
+        "text": "订单号: ORD-2026-0001\n商品名称: 无线降噪耳机\n订单金额: 1299.00 元\n订单状态: 待付款（pending）\n付款状态: 未付款（unpaid）\n下单用户: U1001\n下单时间: 2026-09-15 09:30:00\n签收时间: 未签收"
+      }
+    ],
+    "interrupts": [],
+    "data_before": {
+      "ORD-2026-0001": {
+        "status": "pending",
+        "payment_status": "unpaid"
+      },
+      "ORD-2026-0002": {
+        "status": "paid",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0003": {
+        "status": "shipped",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0004": {
+        "status": "delivered",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0005": {
+        "status": "cancelled",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0006": {
+        "status": "delivered",
+        "payment_status": "paid"
+      }
+    },
+    "data_after": {
+      "ORD-2026-0001": {
+        "status": "pending",
+        "payment_status": "unpaid"
+      },
+      "ORD-2026-0002": {
+        "status": "paid",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0003": {
+        "status": "shipped",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0004": {
+        "status": "delivered",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0005": {
+        "status": "cancelled",
+        "payment_status": "paid"
+      },
+      "ORD-2026-0006": {
+        "status": "delivered",
+        "payment_status": "paid"
+      }
+    },
+    "llm_calls": 2,
+    "elapsed": 4.32345175743103,
+    "assertions": [
+      {
+        "name": "tools",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "not_tools",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "order_id",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "interrupt",
+        "passed": true,
+        "detail": "不该出现 HITL 中断，却出现了"
+      },
+      {
+        "name": "answer_include",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "answer_exclude",
+        "passed": true,
+        "detail": ""
+      }
+    ]
+  }
+]

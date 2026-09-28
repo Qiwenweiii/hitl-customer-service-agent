@@ -1,0 +1,78 @@
+{
+  "generated_at": "2026-09-25T17:13:58",
+  "model": "glm-4.5-air",
+  "cases": {
+    "E05": {
+      "status": "pass",
+      "passed": 8,
+      "total": 8,
+      "failed": []
+    },
+    "E06": {
+      "status": "pass",
+      "passed": 8,
+      "total": 8,
+      "failed": []
+    },
+    "E07": {
+      "status": "pass",
+      "passed": 7,
+      "total": 7,
+      "failed": []
+    },
+    "E03": {
+      "status": "pass",
+      "passed": 6,
+      "total": 6,
+      "failed": []
+    },
+    "E12": {
+      "status": "pass",
+      "passed": 5,
+      "total": 5,
+      "failed": []
+    },
+    "E04": {
+      "status": "pass",
+      "passed": 7,
+      "total": 7,
+      "failed": []
+    },
+    "E08": {
+      "status": "pass",
+      "passed": 8,
+      "total": 8,
+      "failed": []
+    },
+    "E09": {
+      "status": "pass",
+      "passed": 8,
+      "total": 8,
+      "failed": []
+    },
+    "E10": {
+      "status": "pass",
+      "passed": 8,
+      "total": 8,
+      "failed": []
+    },
+    "E11": {
+      "status": "pass",
+      "passed": 8,
+      "total": 8,
+      "failed": []
+    },
+    "E01": {
+      "status": "pass",
+      "passed": 6,
+      "total": 6,
+      "failed": []
+    },
+    "E02": {
+      "status": "pass",
+      "passed": 7,
+      "total": 7,
+      "failed": []
+    }
+  }
+}

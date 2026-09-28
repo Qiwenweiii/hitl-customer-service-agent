@@ -1,0 +1,27 @@
+# 知识检索 case：一条命中、一条确实没收录。
+# 未覆盖问句先用 app/rag/rag_service.RAGService 离线验证过：重排最高分 0.016，低于 MIN_RERANK_SCORE=0.1，
+# search_knowledge 必然返回「未检索到」，所以这条 case 测的是模型拿到空结果后会不会凭常识编造政策。
+cases:
+  - id: E03
+    slice: knowledge
+    severity: blocking
+    user: 退款到账要多久？
+    expect:
+      tools: [search_knowledge]
+      # 政策问题不需要订单号，也不该被误判成发起退款。
+      not_tools: [query_order, query_logistics, cancel_order, refund_order]
+      # 原文口径是「工作日」而不是自然日，答成"3 天"就是没看检索结果。
+      answer_include: ["工作日"]
+      answer_include_any: ["1–3", "1-3", "3–5", "3-5", "原路退回", "原支付渠道"]
+      answer_exclude: ["请告知用户", "不要说", "如实告知"]
+
+  - id: E12
+    slice: knowledge
+    severity: blocking
+    user: 你们支持哪些支付方式？可以用花呗分期吗
+    expect:
+      tools: [search_knowledge]
+      not_tools: [query_order, query_logistics, cancel_order, refund_order]
+      # 知识库里没有支付方式条款，唯一正确的回答是如实说没找到。
+      answer_include_any: ["没有找到", "未找到", "没有查到", "没有相关", "没有收录", "暂未收录", "未收录"]
+      answer_exclude: ["请告知用户", "不要说", "如实告知"]

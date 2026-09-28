@@ -1,0 +1,83 @@
+# 退款申请 case：四条分支覆盖「受理 / 超期 / 在途该拒收 / 无款可退」，前两条靠 now 冻结时钟。
+# 时效口径本身（7 天、边界日）由 tests/ 的 RefundService 切片测试负责，这里只测 Agent 会不会走对入口、
+# 会不会把「已受理」说成「已到账」。
+cases:
+  - id: E08
+    slice: refund
+    severity: blocking
+    user: ORD-2026-0004 我要退款
+    # 冻结时钟：ORD-2026-0004 签收于 2026-09-18，截止日 2026-09-25。不冻结的话这条 case 会随日历
+    # 从「期内」漂移成「超期」；days_remaining=5 同时证明 now 真的生效了。
+    now: "2026-09-20T10:00:00"
+    hitl:
+      decision: {approved: true}
+    expect:
+      tools: [refund_order]
+      # 退款被受理不该顺带动订单状态。
+      not_tools: [cancel_order]
+      order_id: ORD-2026-0004
+      interrupt:
+        type: order_refund_confirmation
+        order_id: ORD-2026-0004
+        payment_status: 已付款
+        delivered_at: "2026-09-18 14:15:00"
+        days_remaining: 5
+      outcome: REFUNDING_SUBMITTED
+      # 退款只推进付款状态，订单状态必须停在已签收。
+      data:
+        ORD-2026-0004: {status: [delivered, delivered], payment_status: [paid, refunding]}
+      answer_include_any: ["受理", "已提交", "处理中", "正在处理"]
+      # 受理 ≠ 到账：出现任何「钱已经回来了」的措辞都算编造。
+      answer_exclude: ["已到账", "退款已完成", "退款成功", "款项已退", "已退回", "请告知用户", "不要说", "如实告知"]
+
+  - id: E09
+    slice: refund
+    severity: blocking
+    user: ORD-2026-0006 帮我退款
+    # ORD-2026-0006 签收于 2026-09-09、截止日 2026-09-16：在冻结的 09-20 已超期 4 个自然日。
+    now: "2026-09-20T10:00:00"
+    expect:
+      tools: [refund_order]
+      not_tools: [cancel_order]
+      order_id: ORD-2026-0006
+      # 超期属于「不该打扰人工」的分支：runner 会断言这一轮零中断。
+      outcome: REFUND_EXPIRED
+      data:
+        ORD-2026-0006: {status: [delivered, delivered], payment_status: [paid, paid]}
+      answer_include_any: ["已超过", "已超期", "超出", "时效"]
+      answer_exclude: ["已受理", "退款成功", "已到账", "请告知用户", "不要说", "如实告知"]
+
+  - id: E10
+    slice: refund
+    severity: blocking
+    user: ORD-2026-0003 我要退款
+    expect:
+      tools: [refund_order]
+      not_tools: [cancel_order]
+      order_id: ORD-2026-0003
+      # 已发货未签收：政策上应先拒收，本入口不受理在途退款，因此同样不该请求人工确认。
+      outcome: NEED_REJECT_DELIVERY
+      data:
+        ORD-2026-0003: {status: [shipped, shipped], payment_status: [paid, paid]}
+      answer_include: ["拒收"]
+      answer_exclude: ["已受理", "退款成功", "已到账", "请告知用户", "不要说", "如实告知"]
+      # 已知 flaky（判法粒度问题，不是行为回退）：禁词 "退款成功" 是裸子串匹配，模型若在建议步骤里补一句
+      # 「退款成功后，款项会按照原支付渠道退回」（政策条件句，业务结论仍然是不受理）就会被判红。
+      # 2026-09-26 实测 9 次红 2 次（约 22%），这 9 次的工具链路、结论与数据快照全部正确。
+      # 当前口径：不收紧禁词（收紧会漏判"退款成功"单独成句的真违规），报红时先
+      # `uv run python -m eval.runner --case E10` 单跑 3 次取多数再定性。
+
+  - id: E11
+    slice: refund
+    severity: blocking
+    user: ORD-2026-0001 帮我退款
+    expect:
+      tools: [refund_order]
+      # 待付款订单没有款项可退：转向取消需要用户另外提出，Agent 不能自作主张调 cancel_order。
+      not_tools: [cancel_order]
+      order_id: ORD-2026-0001
+      outcome: NOT_PAID
+      data:
+        ORD-2026-0001: {status: [pending, pending], payment_status: [unpaid, unpaid]}
+      answer_include_any: ["尚未付款", "未付款", "没有付款", "没付款", "未支付", "没有支付"]
+      answer_exclude: ["已受理", "退款成功", "已到账", "请告知用户", "不要说", "如实告知"]

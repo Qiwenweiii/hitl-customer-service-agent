@@ -1,0 +1,39 @@
+[project]
+name = "customer-service-agent"
+version = "0.1.0"
+description = "企业智能客服 Agent（LangChain + LangGraph）"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "chromadb>=1.5.9",
+    "fastapi>=0.115",
+    "langchain>=1.4.1",
+    "langchain-chroma>=1.1.0",
+    "langchain-huggingface>=1.2.2",
+    "langchain-openai>=1.6.2",
+    "langchain-text-splitters>=1.1.2",
+    "langgraph>=1.2.11",
+    "langsmith>=0.12.6",
+    "numpy==1.26.4",
+    "onnxruntime==1.20.1",
+    "pydantic>=2.13.5",
+    "python-dotenv>=1.2.3",
+    "pyyaml>=6.0.3",
+    "sentence-transformers==5.2.3",
+    "transformers==4.57.3",
+    "uvicorn>=0.30",
+]
+
+# 与已验证的 RAG 依赖组合保持一致：torch / onnxruntime 的平台 wheel 只在 Intel macOS 上验证过。
+[tool.uv]
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

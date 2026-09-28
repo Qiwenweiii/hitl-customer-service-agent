@@ -1,0 +1,17 @@
+# 一句话双意图：系统提示里明确要求「订单 + 物流都要查」，用一条 case 钉住它。
+cases:
+  - id: E04
+    slice: multi_intent
+    # 设为 warn：漏查一个工具是回答质量问题，不触碰数据与安全边界；
+    # 但一旦相比基线回退，runner 仍然会以退出码 1 报出来。
+    severity: warn
+    user: ORD-2026-0004 现在是什么状态，物流到哪了？
+    expect:
+      # 两个工具都必须调用：只查订单等于漏答「到哪了」。
+      tools: [query_order, query_logistics]
+      not_tools: [cancel_order, refund_order]
+      order_id: ORD-2026-0004
+      # 订单侧「已签收」+ 物流侧「顺丰速运」，两个来源的事实都要出现在回答里。
+      answer_include: ["顺丰速运"]
+      answer_include_any: ["已签收", "签收", "望京"]
+      answer_exclude: ["请告知用户", "不要说", "如实告知"]
