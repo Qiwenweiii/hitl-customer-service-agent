@@ -1,14 +1,17 @@
-"""流式事件的展示层：把 ``stream(stream_mode="messages")`` 吐出的原始消息转成 CLI 可读文本。
+"""流式事件的展示层：把 ``stream(stream_mode="messages")`` 吐出的原始消息转成可读文本。
 
-这里只有三件事：
+这里只有四件事：
 1. 从消息里取「可以给人看的正文」（``stream_text``）；
 2. 把工具调用翻译成一句状态提示（``tool_status_lines``），文案由**工具名**查表得到；
-3. 读出「正在等人工确认」的 payload（``pending_confirmation``）。
+3. 读出「正在等人工确认」的 payload（``pending_confirmation``）；
+4. 把一条 Agent 流跑到底、只产出文本增量（``stream_answer``），供只要正文的消费端使用。
 
 刻意不放的东西：不接模型输出决定展示文案，不含任何业务规则，不做 IO（不 print、不 input），
-也不碰 metadata。业务判定仍在 Service / Tool 层，展示口径只在 ``TOOL_STATUS_LABELS`` 这一份表里。
+也不碰 metadata；``stream_answer`` 同样不认识 HTTP／SSE，事件分帧与编码留在 API 层。
+业务判定仍在 Service / Tool 层，展示口径只在 ``TOOL_STATUS_LABELS`` 这一份表里。
 """
 
+from collections.abc import Iterator
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -97,3 +100,18 @@ def pending_confirmation(agent: Any, config: dict) -> dict | None:
         for interruption in getattr(task, "interrupts", ()) or ():
             return interruption.value
     return None
+
+
+def stream_answer(agent: Any, payload: Any, config: dict) -> Iterator[str]:
+    """跑一条 Agent 流，只产出可展示的文本增量，空增量一律不发。
+
+    与 ``scripts/stream_cli.py`` 里那个循环不合并：CLI 还要穿插状态行并管理换行，
+    而只要正文的消费端（HTTP/SSE）不需要。两边共用同一个 ``stream_text`` 取值口径，
+    所以「哪些消息能给人看」这件事仍然只有一份判定。
+
+    这里不认识 SSE／HTTP：不拼事件名、不管分帧与编码，产出的是纯 str 增量。
+    """
+    for message, _metadata in agent.stream(payload, config, stream_mode="messages"):
+        text = stream_text(message)
+        if text:
+            yield text

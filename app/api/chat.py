@@ -20,16 +20,32 @@
 同一会话之后的普通请求照常回答；代价是该线程留下一个待确认中断和一条没有工具结果的 AI 消息。
 所以客户端收到 501 应该改用人工确认入口（``scripts/hitl_cli.py``）或换一个全新会话，
 不要在同一段对话里反复重试同一笔办理。
+
+VS3 在同一条 ``POST /api/chat`` 上加了 SSE 流式，靠 ``Accept`` 头协商而不是新增字段或新端点：
+带 ``Accept: text/event-stream`` 才走流式，其余（含 ``*/*`` 与不带该头的老客户端）照旧返回 JSON。
+流式只有三类事件：``token``（``{"content": "增量文本"}``）、``done``（``{}``，正常收尾）、
+``error``（``{"message": "..."}``，终止且后面不再有 done）。客户端把依次到达的 token 正文拼起来即为完整答复。
+``thread_id`` 生成规则与同步路径一致，并通过响应头 ``X-Thread-Id`` 回显（SSE 正文里没有承载它的字段）。
+Agent 侧出错时只回一句固定话术，异常原文与 traceback 留在服务端日志，不进响应。
+HITL 仍然不办理：``stream_mode="messages"`` 不会吐中断事件，流只是安静结束，
+因此本轮没有任何文本增量且线程确实停在待确认点时，改发 ``error`` 事件说明「这一笔没有办理」，
+不回 ``done``，避免客户端把「没处理」读成「答完了」。
 """
 
+import json
+import logging
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.agent.streaming import stream_text
+from app.agent.streaming import pending_confirmation, stream_answer, stream_text
+
+logger = logging.getLogger(__name__)
 
 # 用户没提供会话 id 时由服务端生成；前缀便于在日志与 checkpointer 里分辨来源。
 THREAD_ID_PREFIX = "chat-"
@@ -40,6 +56,13 @@ HITL_NOT_SUPPORTED_DETAIL = (
     "当前 API 版本不支持处理人工确认，因此该操作没有执行，订单数据未被改动。"
     "请使用人工确认入口（scripts/hitl_cli.py）办理，或改用查询类问题。"
 )
+
+# SSE 的媒体类型：客户端在 Accept 里显式带上它才走流式。
+MEDIA_TYPE_EVENT_STREAM = "text/event-stream"
+# 流式响应没有承载会话 id 的字段，新建的 thread_id 用这个响应头回显给客户端。
+THREAD_ID_HEADER = "X-Thread-Id"
+# 流式出错时给客户端的一句话：异常原文可能含模型名、端点地址等内部信息，不进响应。
+STREAM_ERROR_MESSAGE = "服务处理本轮请求时出错，本轮答复已中断，请稍后重试。"
 
 
 class ChatRequest(BaseModel):
@@ -102,13 +125,51 @@ def _answer_of(result: Any) -> str:
     return stream_text(result["messages"][-1])
 
 
+def _sse_event(event: str, data: dict) -> str:
+    """一条 SSE 事件：``event:`` 行 + ``data:`` 行 + 空行分帧。
+
+    data 走 ``json.dumps(ensure_ascii=False)``：正文里的换行被转义成 ``\\n``，
+    一条事件因此永远只占一行 ``data:``，不会把 SSE 的分帧撞断；中文也不变成 ``\\uXXXX``。
+    """
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _wants_event_stream(request: Request) -> bool:
+    """只有显式要求 ``text/event-stream`` 才走流式。
+
+    不能把 ``Accept: */*``（curl 与多数 HTTP 客户端的默认值）也算成流式请求，
+    否则 VS3 会悄悄改变所有既有客户端拿到的响应形态。
+    """
+    return MEDIA_TYPE_EVENT_STREAM in (request.headers.get("accept") or "")
+
+
+def _stream_events(agent: Any, message: str, config: dict) -> Iterator[str]:
+    """把 Agent 的文本增量转成 SSE 事件序列：``token``* 然后 ``done``；出错只发 ``error``。"""
+    produced = False
+    try:
+        for text in stream_answer(agent, {"messages": [HumanMessage(message)]}, config):
+            produced = True
+            yield _sse_event("token", {"content": text})
+        if not produced and pending_confirmation(agent, config) is not None:
+            # 图停在待确认点时 messages 流只是结束，不吐中断事件：
+            # 回 done 等于告诉客户端「答完了」，必须改口说明这一笔没办理。
+            yield _sse_event("error", {"message": HITL_NOT_SUPPORTED_DETAIL})
+            return
+        yield _sse_event("done", {})
+    except Exception:
+        # 异常原文与 traceback 只进服务端日志；响应头此时已发出，改不了状态码，只能发 error 事件。
+        logger.exception("流式请求处理失败，已向客户端发送 error 事件")
+        yield _sse_event("error", {"message": STREAM_ERROR_MESSAGE})
+
+
 def create_chat_app(agent: Any) -> FastAPI:
     """用注入的 Agent 构建 API 应用。
 
     Args:
-        agent: 可 ``invoke`` 的客服 Agent（``create_customer_service_agent`` 的返回值），
-            测试可注入假 Agent。调用方负责给它配好 checkpointer，
-            否则 ``thread_id`` 不生效：每轮都是全新上下文。
+        agent: 客服 Agent（``create_customer_service_agent`` 的返回值）。同步分支用 ``invoke``，
+            流式分支用 ``stream(stream_mode="messages")``，只在「本轮没有产出文本」时才读 ``get_state``。
+            测试可注入假 Agent，三条路径分别打桩即可，不需要真实大模型。
+            调用方负责给它配好 checkpointer，否则 ``thread_id`` 不生效：每轮都是全新上下文。
 
     Returns:
         暴露 ``POST /api/chat`` 的 FastAPI 应用。
@@ -116,18 +177,25 @@ def create_chat_app(agent: Any) -> FastAPI:
     app = FastAPI(
         title="Customer Service Agent API",
         version="0.1.0",
-        description="同步对话接口（VS1）：不含流式、人工确认与认证。",
+        description="对话接口：默认返回 JSON；带 Accept: text/event-stream 时返回 SSE 流。"
+        "不含人工确认与认证。",
     )
 
     # 处理函数用普通 def：Agent 的 invoke 是阻塞调用，交给 FastAPI 的线程池跑，
     # 不伪装成 async（图本身没有 await 能力）。
-    @app.post("/api/chat", response_model=ChatResponse, summary="同步对话（一轮问答）")
-    def chat(payload: ChatRequest) -> ChatResponse:
+    # 返回 StreamingResponse 时它是个 Response 实例，FastAPI 不会再用 response_model 去校验它，
+    # 所以 response_model 保留为同步分支的 JSON 契约。
+    @app.post("/api/chat", response_model=ChatResponse, summary="对话（一轮问答，JSON 或 SSE 流）")
+    def chat(payload: ChatRequest, request: Request) -> ChatResponse | StreamingResponse:
         thread_id = payload.thread_id or new_thread_id()
-        result = agent.invoke(
-            {"messages": [HumanMessage(payload.message)]},
-            build_config(thread_id),
-        )
+        config = build_config(thread_id)
+        if _wants_event_stream(request):
+            return StreamingResponse(
+                _stream_events(agent, payload.message, config),
+                media_type=MEDIA_TYPE_EVENT_STREAM,
+                headers={THREAD_ID_HEADER: thread_id, "Cache-Control": "no-cache"},
+            )
+        result = agent.invoke({"messages": [HumanMessage(payload.message)]}, config)
         if result.get("__interrupt__"):
             raise HTTPException(status_code=501, detail=HITL_NOT_SUPPORTED_DETAIL)
         return ChatResponse(answer=_answer_of(result), thread_id=thread_id)

@@ -20,8 +20,11 @@
   Memory / `thread_id` / HITL 全部沿用，见[流式输出（CLI Streaming）](#流式输出cli-streaming)。
 - **同步 Chat API**：`app/api/chat.py` 用 FastAPI 暴露 `POST /api/chat`，请求 `{"message", "thread_id"}` →
   响应 `{"answer", "thread_id"}`；`app/main.py` 的 `create_app()` 是唯一组装点，一个进程建一次 Agent 与 checkpointer，
-  请求内不重建。API 层复用同一个 Agent，不写业务规则、不自建模型。本版本不含流式、人工确认与认证，见[同步 Chat API（HTTP）](#同步-chat-apihttp)。
-- **测试**：272 个用例全部通过（`uv run pytest`）。
+  请求内不重建。API 层复用同一个 Agent，不写业务规则、不自建模型。本版本不含人工确认与认证，见[同步 Chat API（HTTP）](#同步-chat-apihttp)。
+- **HTTP 流式（SSE）**：同一条 `POST /api/chat`，客户端带 `Accept: text/event-stream` 就改成 SSE 逐段推送，
+  只有 `token`／`done`／`error` 三类事件；请求体与不带该头时的 JSON 响应一字未改，CLI 流式也不受影响。
+  见[HTTP 流式（SSE）](#http-流式sse)。
+- **测试**：308 个用例全部通过（`uv run pytest`）。
 - **Agent 评测（最小集合）**：`eval/runner.py` + 12 条 case / 86 个确定性断言，覆盖路由、双意图、政策检索与未覆盖拒答、
   取消（批准 / 拒绝 / 不允许）、退款（受理 / 超期 / 在途 / 未付款）；真实模型全绿并已建立基线。
   覆盖面与判法见[Agent 评测](#agent-评测eval)与[已知缺口](#已知缺口)第 7 条。
@@ -64,9 +67,9 @@ customer-service-agent/
 │   ├── hitl_cli.py             # 取消 / 退款的人工确认命令行入口（非流式）
 │   ├── smoke_data.py           # 数据层冒烟：读配置与 Mock 订单，不需要大模型（原 app/main.py）
 │   ├── stream_cli.py           # 流式命令行入口：回复逐字上屏 + 工具状态行
-│   ├── chat_api.py             # 同步 Chat API 启动入口：只解析 --host/--port 并交给 uvicorn
+│   ├── chat_api.py             # Chat API 启动入口（JSON + SSE）：只解析 --host/--port 并交给 uvicorn
 │   └── streaming_demo.py       # 探索用的最小样例，不是入口（未处理 ToolMessage）
-├── tests/                      # 11 个测试文件，按垂直切片组织
+├── tests/                      # 12 个测试文件，按垂直切片组织
 ├── eval/                       # Agent 评测：真实模型跑 dataset，确定性断言 + 基线回退判定
 │   ├── dataset/*.yaml          #   case 定义（用户输入 + 期望的工具/参数/中断/判定/数据/措辞）
 │   ├── runner.py               #   唯一评测入口：装载校验 → 隔离执行 → 采集证据 → 断言 → 报表
@@ -98,8 +101,8 @@ customer-service-agent/
 | Tool | 只做「调用检查、是否中断、措辞」。不出现业务规则常量（如时效天数），不直接 import `data_loader` |
 | Service | 规则集中处：判定（`check_*`，只读）与执行（`OrderService.cancel_order` / `RefundService.apply_refund`，写库）分离，执行前重新判定，不信任上层早先的结论 |
 | data_loader | 状态字段的唯一写入口；Service 与 Tool 都不直接改文件 |
-| 展示（`agent/streaming.py`） | 流式事件的取数与查表：哪类消息有正文、哪个工具名对应哪句状态。不做 IO、不产生业务结论，展示文案也不由模型输出决定 |
-| API（`api/chat.py`） | HTTP 契约 ↔ Agent 契约的互转：字段校验、组装 `thread_id`、取最终答复正文。不 import Service 与数据层、不自建模型、不留全局 app / 全局 agent |
+| 展示（`agent/streaming.py`） | 流式事件的取数与查表：哪类消息有正文、哪个工具名对应哪句状态、一条 Agent 流怎么跑成文本增量（`stream_answer`）。不做 IO、不产生业务结论，展示文案也不由模型输出决定，更不认识 HTTP／SSE |
+| API（`api/chat.py`） | HTTP 契约 ↔ Agent 契约的互转：字段校验、组装 `thread_id`、取最终答复正文、`Accept` 协商与 SSE 事件分帧／编码。不 import Service 与数据层、不自建模型、不留全局 app / 全局 agent |
 | 组装（`main.py`） | 应用工厂 `create_app()`：一个进程建一次 Agent 与 Checkpointer，再交给路由；请求内不再创建。不写 HTTP 契约、不含业务规则、模块级不留全局 app |
 
 一个能力一套文件：`tools/*_tools.py` 与 `services/*_service.py` 按能力（订单 / 退款 / 物流 / RAG）一一对应。
@@ -311,6 +314,54 @@ curl -s -X POST http://127.0.0.1:8000/api/chat \
 - **上游失败不会被吞成 200**：模型调用报错时响应是 500，不是一条空 `answer`。
 - **处理函数用普通 `def`**：`agent.invoke` 是阻塞调用，交给 FastAPI 线程池执行；图本身没有 await 能力，不伪装 async。
 
+### HTTP 流式（SSE）
+
+同一条 `POST /api/chat` 增加流式，**不新增端点、不给 `ChatRequest` 加字段**，靠 `Accept` 头协商：
+
+```bash
+uv run python scripts/chat_api.py
+
+# 带 Accept: text/event-stream → SSE 逐段推送（curl -N 关掉本地缓冲才能看到分段到达）
+curl -N -X POST http://127.0.0.1:8000/api/chat \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
+  -d '{"message": "订单 ORD-2026-0002 到哪了"}'
+# event: token
+# data: {"content": "您好，"}
+# event: token
+# data: {"content": "您的订单 ORD-2026-0002"}
+# ...
+# event: done
+# data: {}
+
+# 不带这个头（或只带默认的 Accept: */*）→ 仍然是原来的 JSON 一次性响应
+```
+
+事件只有三类，客户端只需按顺序把 `token.content` 拼起来：
+
+| 事件 | data | 含义 |
+| --- | --- | --- |
+| `token` | `{"content": "增量文本"}` | 模型正文的一个增量，可能出现多次 |
+| `done` | `{}` | 本轮正常结束，只出现一次且必定是最后一个事件 |
+| `error` | `{"message": "一句话"}` | 本轮失败或被拒绝，**终止事件**，后面不会再有 `done` |
+
+- **只有显式 `Accept: text/event-stream` 才走流式**：`*/*` 是 curl 与多数 HTTP 客户端的默认值，
+  把它算成流式请求会悄悄改变所有既有客户端拿到的响应形态。
+- **分层仍旧干净**：Agent 流的读法在 `app/agent/streaming.py::stream_answer`（只产出纯文本增量，不认识 HTTP/SSE），
+  SSE 的分帧与编码只在 API 层。有源码守卫禁止 `fastapi` / `StreamingResponse` / `event:` / `json.dumps` 出现在展示层。
+- **`thread_id` 走响应头 `X-Thread-Id`**：生成规则与同步路径完全一致（没带就新建 `chat-<12位hex>`），
+  因为 SSE 正文里没有承载它的字段；多轮记忆在流式下照常生效（同一 `thread_id` 的第二轮看得到第一轮，有真图测试兜底）。
+- **出错不甩 traceback**：Agent 侧异常只回一句固定话术，异常原文可能含模型名与端点地址，只进服务端日志；
+  流一旦开始响应头就发出去了，状态码只能是 200，失败信息一律靠 `error` 事件表达。
+- **停在人工确认时不假装答完**：`stream_mode="messages"` 不会把中断当事件吐出来，流只是安静结束，
+  因此本轮零文本且线程确实停在待确认点时改发 `error`（沿用同步路径那句「该操作没有执行」），
+  而不是回 `done` 让客户端把「没处理」读成「答完了」。正常有文本的答复不会多付一次 checkpoint 读。
+- **工具原文与内部结构不进流**：只吐 `AIMessage` 系列的正文，`ToolMessage`、`tool_call_chunks`、事件 `metadata`
+  都被展示层挡掉（与 CLI 同一份 `stream_text` 判定）。
+- **本版做不到的**：没有心跳与断线续传（连接断了只能整轮重来）、客户端与服务器都没有「中途停止生成」、
+  工具执行期间没有进度事件（要状态行请用 `scripts/stream_cli.py`）、错误也只有文本一种载体，
+  没带状态码语义。见[已知缺口](#已知缺口)第 9 条。
+
 ## RAG 知识库
 
 ```
@@ -374,13 +425,13 @@ uv run python -c "from app.tools.order_tools import query_order; print(query_ord
 ## 测试
 
 ```bash
-uv run pytest                        # 272 passed
+uv run pytest                        # 308 passed
 uv run pytest tests/test_refund_slice.py
 ```
 
 按垂直切片组织，除数据模型测试外每个切片一个文件（`test_query_order_slice`、`test_cancel_order_slice`、
 `test_query_logistics_slice`、`test_refund_slice`、`test_agent_slice`、`test_conversation_memory_slice`、
-`test_streaming_slice`、`test_chat_api_slice`、`test_knowledge_base`、`test_rag_service`）。
+`test_streaming_slice`、`test_chat_api_slice`、`test_http_streaming_slice`、`test_knowledge_base`、`test_rag_service`）。
 几条贯穿性的约定，都有测试兜底：
 
 - **写库测试只落在 `tmp_path` 副本**，`test_refund_slice.py` 末尾有哨兵断言真实 `data/mock/orders.json` 逐字节未被改动。
@@ -403,6 +454,11 @@ uv run pytest tests/test_refund_slice.py
   证 Agent 与 Checkpointer 在一个进程里只建一次、之后每个请求复用同一个实例（第二轮「第 2 轮提问」同时也否证了每请求重建）。
   假答复文本刻意不含任何「泄漏标记」子串（有自检断言兜住），
   否则「响应不含内部结构」这条断言会失效或被自己的数据误伤。
+- **HTTP 流式测试用「脚本化假流式 Agent」**（`test_http_streaming_slice.py`）：它按真实协议形状直接吐
+  `(消息, metadata)` 事件，测试再把 SSE 正文按空行解析回事件来断言分帧、顺序与 JSON 转义（含正文里的换行）。
+  两条关键守卫是「没带 `Accept: text/event-stream` 的请求必须走 `invoke`」（假 Agent 的 `stream()` 一被调用就报错）
+  与「`error` 事件只有一句固定话术」（假异常里塞了内部字样，出现在正文即判失败）；
+  另有真图 + 假流式模型跑 `create_app()`，证明流式没有绕开 checkpointer——同一 `thread_id` 第二轮仍数得出两轮提问。
 
 ## Agent 评测（eval）
 
@@ -487,13 +543,16 @@ E10 是**已知的偶发红**，红在判法粒度而不是行为：禁词 `退�
    没有会话归属与权限校验（拿到别人的 thread_id 就能接着那段对话说）；
    `eval/dataset/` 目前 12 条 case 全是单轮，**多轮指代是否真的解对没有机器判定**，
    pytest 只证明上下文送达与线程隔离，实际效果靠人工翻 `scripts/hitl_cli.py`。
-9. **流式只做到 CLI**：`stream_mode="messages"` 的消费端只有 `scripts/stream_cli.py`，
-   HTTP 侧目前只有同步的 `POST /api/chat`（一次性返回整段答复），流式没有做到网络上：
-   没有 SSE / WebSocket 与前端，也没有「中途停止生成」和断线续传（半条回答无法重来或续上）；
-   状态行是工具开始执行的提示，没有进度与耗时，工具失败与慢查询在屏上看起来一样。
+9. **流式已上到网络，但边界还在**：`stream_mode="messages"` 现在有两个消费端 —— CLI 的逐字上屏与
+   HTTP 的 SSE（`Accept: text/event-stream`，只有 `token`／`done`／`error` 三类事件）。
+   没做的是心跳与断线续传（连接断了只能整轮重来，半条回答无法续上）、客户端与服务器的「中途停止生成」，
+   以及 WebSocket 与前端页面；HTTP 通道刻意不带状态行 —— 工具执行期间客户端只能干等，
+   要进度提示仍只能用 `scripts/stream_cli.py`。错误也只有一个 `message` 字符串，没有状态码语义
+   （流一旦开始就只能回 200）。图停在人工确认时流式只能改发 `error` 事件，办理仍旧不可用（见第 10 条）。
    `eval/runner.py` 仍旧走 `invoke()`，同一条 case 在流式与非流式下是否给出同一个回答没有机器判定。
-10. **Chat API 只做到「同步单轮返回」**：不处理人工确认（用户要求取消／退款即返回 501，
-    该线程留下一个待确认中断与一条没有工具结果的 AI 消息，只能换会话或改用 `hitl_cli.py`）；
+10. **Chat API 只做到「单轮问答 + SSE 流式」**：两条通道都不办理人工确认
+    （同步返回 501、流式发 `error` 事件，该线程留下一个待确认中断与一条没有工具结果的 AI 消息，
+    只能换会话或改用 `hitl_cli.py`）；
     没有认证与授权，缺口 8 里的「`thread_id` 就是访问凭证」在网络端口上更该优先补 ——
     任何能访问端口的人拿到别人的 `thread_id` 就能接着那段对话说；没有速率限制与请求体上限，
     长回答会一直占着一次线程池槽位；会话仍是进程内 `InMemorySaver`，重启即全部丢失，也没有会话与确认的持久化审计；
