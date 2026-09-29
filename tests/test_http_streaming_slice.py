@@ -432,12 +432,30 @@ def test_stream_without_text_and_without_pending_still_closes_cleanly() -> None:
     assert agent.state_reads == 1
 
 
-def test_pending_confirmation_is_not_read_when_tokens_exist() -> None:
-    """正常答复不该多付一次 checkpoint 读：只有零文本时才去问状态。"""
-    agent = ScriptedStreamAgent(_chunks("答复。"), pending=CANCEL_PENDING)
+def test_preamble_tokens_do_not_hide_a_parked_confirmation() -> None:
+    """真实模型常态是「先说一句我来帮您取消」再调工具：已发出的客套话不能代替状态判定。
+
+    这条是 VS3 真实模型 smoke 撞出来的回归：旧实现用「本轮有没有文本增量」当捷径跳过
+    ``get_state``，于是图明明停在确认位上却回 ``done``，客户端把「没处理」读成「答完了」。
+    """
+    agent = ScriptedStreamAgent(
+        _chunks("我来帮您取消订单 ORD-2026-0002。"), pending=CANCEL_PENDING
+    )
+    outcome = _ask_stream(_client(agent), "帮我取消订单 ORD-2026-0002")
+    names = _names(outcome)
+    assert names[-1] == "error"
+    assert "done" not in names
+    # 已经上屏的增量不回滚：客户端拿到「半句 + error」，比拿到空响应或 done 都诚实。
+    assert _answer_of(outcome) == "我来帮您取消订单 ORD-2026-0002。"
+    assert agent.state_reads == 1
+
+
+def test_normal_tokens_close_with_done_after_one_state_read() -> None:
+    """done 的代价是每条流收尾读一次 checkpoint 状态：宁可多读，也不能误报完成。"""
+    agent = ScriptedStreamAgent(_chunks("答复。"))
     outcome = _ask_stream(_client(agent), "你好")
     assert _names(outcome)[-1] == "done"
-    assert agent.state_reads == 0
+    assert agent.state_reads == 1
 
 
 # ---------------------------------------------------------------- 参数校验仍然挡在前面

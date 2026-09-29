@@ -28,8 +28,10 @@ VS3 在同一条 ``POST /api/chat`` 上加了 SSE 流式，靠 ``Accept`` 头协
 ``thread_id`` 生成规则与同步路径一致，并通过响应头 ``X-Thread-Id`` 回显（SSE 正文里没有承载它的字段）。
 Agent 侧出错时只回一句固定话术，异常原文与 traceback 留在服务端日志，不进响应。
 HITL 仍然不办理：``stream_mode="messages"`` 不会吐中断事件，流只是安静结束，
-因此本轮没有任何文本增量且线程确实停在待确认点时，改发 ``error`` 事件说明「这一笔没有办理」，
-不回 ``done``，避免客户端把「没处理」读成「答完了」。
+因此每条流收尾时都读一次线程状态（``get_state``）：只要它还停在待确认点，就改发 ``error``
+事件说明「这一笔没有办理」，不回 ``done``，避免客户端把「没处理」读成「答完了」。
+这里不能用「本轮有没有文本增量」代替状态检查：模型常态是先回一句「我来帮您取消」再调工具，
+那句客套话已经到了客户端，但图其实才刚停在确认位上。
 """
 
 import json
@@ -144,15 +146,16 @@ def _wants_event_stream(request: Request) -> bool:
 
 
 def _stream_events(agent: Any, message: str, config: dict) -> Iterator[str]:
-    """把 Agent 的文本增量转成 SSE 事件序列：``token``* 然后 ``done``；出错只发 ``error``。"""
-    produced = False
+    """把 Agent 的文本增量转成 SSE 事件序列：``token``* 然后 ``done``；出错只发 ``error``。
+
+    ``done`` 之前一定要先问一次线程状态：图停在人工确认位时 messages 流只是结束，
+    既不吐中断事件也不报错，此时已发出的客套话会被客户端当成完整答复。
+    这个判定放在异常捕获之内：状态读取本身出问题也只是退化成一条 ``error`` 事件，不会留半截流。
+    """
     try:
         for text in stream_answer(agent, {"messages": [HumanMessage(message)]}, config):
-            produced = True
             yield _sse_event("token", {"content": text})
-        if not produced and pending_confirmation(agent, config) is not None:
-            # 图停在待确认点时 messages 流只是结束，不吐中断事件：
-            # 回 done 等于告诉客户端「答完了」，必须改口说明这一笔没办理。
+        if pending_confirmation(agent, config) is not None:
             yield _sse_event("error", {"message": HITL_NOT_SUPPORTED_DETAIL})
             return
         yield _sse_event("done", {})
@@ -167,8 +170,8 @@ def create_chat_app(agent: Any) -> FastAPI:
 
     Args:
         agent: 客服 Agent（``create_customer_service_agent`` 的返回值）。同步分支用 ``invoke``，
-            流式分支用 ``stream(stream_mode="messages")``，只在「本轮没有产出文本」时才读 ``get_state``。
-            测试可注入假 Agent，三条路径分别打桩即可，不需要真实大模型。
+            流式分支用 ``stream(stream_mode="messages")``，并在每条流收尾时读一次 ``get_state``
+            判断线程是否停在待确认点。测试可注入假 Agent，这三个方法分别打桩即可，不需要真实大模型。
             调用方负责给它配好 checkpointer，否则 ``thread_id`` 不生效：每轮都是全新上下文。
 
     Returns:

@@ -24,7 +24,7 @@
 - **HTTP 流式（SSE）**：同一条 `POST /api/chat`，客户端带 `Accept: text/event-stream` 就改成 SSE 逐段推送，
   只有 `token`／`done`／`error` 三类事件；请求体与不带该头时的 JSON 响应一字未改，CLI 流式也不受影响。
   见[HTTP 流式（SSE）](#http-流式sse)。
-- **测试**：308 个用例全部通过（`uv run pytest`）。
+- **测试**：309 个用例全部通过（`uv run pytest`）。
 - **Agent 评测（最小集合）**：`eval/runner.py` + 12 条 case / 86 个确定性断言，覆盖路由、双意图、政策检索与未覆盖拒答、
   取消（批准 / 拒绝 / 不允许）、退款（受理 / 超期 / 在途 / 未付款）；真实模型全绿并已建立基线。
   覆盖面与判法见[Agent 评测](#agent-评测eval)与[已知缺口](#已知缺口)第 7 条。
@@ -354,8 +354,11 @@ curl -N -X POST http://127.0.0.1:8000/api/chat \
 - **出错不甩 traceback**：Agent 侧异常只回一句固定话术，异常原文可能含模型名与端点地址，只进服务端日志；
   流一旦开始响应头就发出去了，状态码只能是 200，失败信息一律靠 `error` 事件表达。
 - **停在人工确认时不假装答完**：`stream_mode="messages"` 不会把中断当事件吐出来，流只是安静结束，
-  因此本轮零文本且线程确实停在待确认点时改发 `error`（沿用同步路径那句「该操作没有执行」），
-  而不是回 `done` 让客户端把「没处理」读成「答完了」。正常有文本的答复不会多付一次 checkpoint 读。
+  因此每条流收尾时都读一次线程状态，只要它停在待确认点就改发 `error`（沿用同步路径那句「该操作没有执行」），
+  而不是回 `done` 让客户端把「没处理」读成「答完了」。这条判定不能用「本轮有没有文本增量」代替：
+  真实模型常态是先回一句「我来帮您取消」再调工具，那句客套话已经到了客户端，图却才刚停在确认位上
+  （真实模型 smoke 实测撞出来的，`test_preamble_tokens_do_not_hide_a_parked_confirmation` 钉住它）。
+  已经下发的增量不回滚，客户端拿到「半句 + `error`」；代价是每条流多一次 checkpoint 读。
 - **工具原文与内部结构不进流**：只吐 `AIMessage` 系列的正文，`ToolMessage`、`tool_call_chunks`、事件 `metadata`
   都被展示层挡掉（与 CLI 同一份 `stream_text` 判定）。
 - **本版做不到的**：没有心跳与断线续传（连接断了只能整轮重来）、客户端与服务器都没有「中途停止生成」、
@@ -425,7 +428,7 @@ uv run python -c "from app.tools.order_tools import query_order; print(query_ord
 ## 测试
 
 ```bash
-uv run pytest                        # 308 passed
+uv run pytest                        # 309 passed
 uv run pytest tests/test_refund_slice.py
 ```
 
