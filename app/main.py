@@ -17,9 +17,15 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agent import create_customer_service_agent
 from app.api import create_chat_app
+from app.session_store import SessionStore
 
 
-def create_app(model: BaseChatModel | None = None, *, checkpointer=None) -> FastAPI:
+def create_app(
+    model: BaseChatModel | None = None,
+    *,
+    checkpointer=None,
+    session_store: SessionStore | None = None,
+) -> FastAPI:
     """组装 Chat API 应用。
 
     Args:
@@ -28,12 +34,16 @@ def create_app(model: BaseChatModel | None = None, *, checkpointer=None) -> Fast
         checkpointer: 会话存储；为空则用 ``InMemorySaver``，
             即历史与待人工确认状态只在当前进程内有效，重启全部丢失。
             换成持久化 checkpointer 只需要改这一个入参。
+        session_store: 会话归属存储；为空则新建一份进程内 ``SessionStore``，
+            与 checkpointer 同样只在启动时创建一次、所有请求共用。
 
     Returns:
-        暴露 ``POST /api/chat`` 的 FastAPI 应用，内部已装好唯一的 Agent 实例。
+        暴露 ``POST /api/chat`` 的 FastAPI 应用，内部已装好唯一的 Agent 实例，
+        并已开启 thread_id 的会话归属校验（未知 thread 或凭据不符一律 403）。
     """
     agent = create_customer_service_agent(
         model,
         checkpointer=checkpointer if checkpointer is not None else InMemorySaver(),
     )
-    return create_chat_app(agent)
+    store = session_store if session_store is not None else SessionStore()
+    return create_chat_app(agent, store)

@@ -1,0 +1,201 @@
+{
+  "name": "rag_ablation_queries",
+  "description": "RAG 消融测试集：21 条 query 覆盖 4 份政策文档。expected_document_id / expected_chunk_index 基于 scripts/build_knowledge_base.py 同款切分参数（chunk_size=500, overlap=60）产出的真实 chunk 内容人工核对标注，1-based。答案跨 chunk 时标注最核心的一块，note 中说明其余出处。",
+  "chunk_params": {
+    "chunk_size": 500,
+    "chunk_overlap": 60,
+    "separators": [
+      "\n\n",
+      "\n",
+      "。",
+      "，",
+      ""
+    ]
+  },
+  "queries": [
+    {
+      "id": 1,
+      "query": "7天无理由退货的条件是什么？",
+      "query_type": "direct",
+      "expected_document_id": "refund_policy.md",
+      "expected_chunk_index": 2,
+      "note": "该 chunk 是政策第二章「7 天无理由退货」全文：7 个自然日时限自物流签收次日起算、商品完好、运费自理。"
+    },
+    {
+      "id": 2,
+      "query": "退款到账时间一般是多久？",
+      "query_type": "direct",
+      "expected_document_id": "refund_policy.md",
+      "expected_chunk_index": 4,
+      "note": "第五章「退款金额与到账时间」在此 chunk：余额/微信/支付宝 1–3 个工作日、银行卡 3–5 个工作日、最长 10 个工作日。"
+    },
+    {
+      "id": 3,
+      "query": "冰箱、洗衣机这类大家电的保修期是多久？",
+      "query_type": "direct",
+      "expected_document_id": "after_sales_policy.md",
+      "expected_chunk_index": 1,
+      "note": "保修期限表在此 chunk 第一条：大家电整机 12 个月、主要部件 36 个月。"
+    },
+    {
+      "id": 4,
+      "query": "申请售后之后从审核到维修完成整个流程有时限要求吗？",
+      "query_type": "direct",
+      "expected_document_id": "after_sales_policy.md",
+      "expected_chunk_index": 3,
+      "note": "第四章「售后处理流程与时限」在此 chunk：初审 24 小时、7 日内寄出、质检 48 小时、维修 3–7 个工作日。"
+    },
+    {
+      "id": 5,
+      "query": "金卡会员需要近12个月累计实付满多少才能升级？",
+      "query_type": "direct",
+      "expected_document_id": "membership_policy.md",
+      "expected_chunk_index": 1,
+      "note": "等级门槛在此 chunk：金卡为近 12 个自然月累计实付满 6,999 元、享 95 折。"
+    },
+    {
+      "id": 6,
+      "query": "积分抵扣的比例是多少？单笔订单最多能抵扣几成？",
+      "query_type": "direct",
+      "expected_document_id": "membership_policy.md",
+      "expected_chunk_index": 4,
+      "note": "第五章「积分使用与抵扣」在此 chunk：100 积分抵 1 元，单笔最高抵扣实付 20%、铂金可至 30%。"
+    },
+    {
+      "id": 7,
+      "query": "运费怎么收？多少金额才包邮？",
+      "query_type": "direct",
+      "expected_document_id": "shipping_policy.md",
+      "expected_chunk_index": 2,
+      "note": "第二章「运费与包邮规则」在此 chunk：自营满 99 免基础运费、未满收 8 元、偏远地区统一 15 元。"
+    },
+    {
+      "id": 8,
+      "query": "普通现货商品付款后多久发货？",
+      "query_type": "direct",
+      "expected_document_id": "shipping_policy.md",
+      "expected_chunk_index": 1,
+      "note": "第一章发货时效在此 chunk：现货支付后 24 小时内出库，大促延至 48 小时。"
+    },
+    {
+      "id": 9,
+      "query": "我买错了能退吗",
+      "query_type": "colloquial",
+      "expected_document_id": "refund_policy.md",
+      "expected_chunk_index": 2,
+      "note": "买错属非质量原因的退货场景，答案在 7 天无理由条款：时限内且商品完好可退、运费自理、定制类除外。"
+    },
+    {
+      "id": 10,
+      "query": "东西坏了咋办",
+      "query_type": "colloquial",
+      "expected_document_id": "after_sales_policy.md",
+      "expected_chunk_index": 2,
+      "note": "保修期内非人为性能故障免费检测/维修/换件在此 chunk；签收 15 日内还可按 refund_policy.md chunk 3 选退款或换货，答案跨文档，本条以报修为主出处。"
+    },
+    {
+      "id": 11,
+      "query": "快递怎么一直不动啊",
+      "query_type": "colloquial",
+      "expected_document_id": "shipping_policy.md",
+      "expected_chunk_index": 4,
+      "note": "第五章「物流信息更新与常见延迟」在此 chunk：揽收回传 2–6 小时、转运滞后 6–12 小时、夜间干线无轨迹属正常。"
+    },
+    {
+      "id": 12,
+      "query": "积分怎么攒",
+      "query_type": "colloquial",
+      "expected_document_id": "membership_policy.md",
+      "expected_chunk_index": 3,
+      "note": "第四章「积分获取」在此 chunk：消费 1 元 1 积分、生日双倍、带图评价 20 分、连签 7 天 50 分。"
+    },
+    {
+      "id": 13,
+      "query": "会员等级什么时候重新评定？达不到要求会掉级吗",
+      "query_type": "colloquial",
+      "expected_document_id": "membership_policy.md",
+      "expected_chunk_index": 2,
+      "note": "第二章「等级有效期与保级规则」在此 chunk：每年 1 月 1 日重评，达门槛 60% 保级，提前 15 天通知。"
+    },
+    {
+      "id": 14,
+      "query": "明天就想收到，加急送要加钱吗",
+      "query_type": "colloquial",
+      "expected_document_id": "shipping_policy.md",
+      "expected_chunk_index": 2,
+      "note": "次日达条款在此 chunk：支持城市另付 12 元、仅限自营现货、每日 16:00 截单。"
+    },
+    {
+      "id": 15,
+      "query": "申请售后要准备点啥",
+      "query_type": "colloquial",
+      "expected_document_id": "after_sales_policy.md",
+      "expected_chunk_index": 1,
+      "note": "文档头部售后入口在此 chunk：App 订单详情发起，需提供订单号（ORD-2026-0001 格式）与故障描述。"
+    },
+    {
+      "id": 16,
+      "query": "质量问题退货的取件费，和普通退货的运费是一个说法吗？",
+      "query_type": "cross_topic",
+      "expected_document_id": "refund_policy.md",
+      "expected_chunk_index": 3,
+      "note": "核心区分在此 chunk：质量问题寄回运费平台承担、上门取件普通会员 30 元且退款时返还；无理由退货运费自理在 chunk 2，金卡免取件费在 membership_policy.md chunk 5。"
+    },
+    {
+      "id": 17,
+      "query": "用积分抵过的订单退款后，积分会退回来吗？会不会过期？",
+      "query_type": "cross_topic",
+      "expected_document_id": "membership_policy.md",
+      "expected_chunk_index": 4,
+      "note": "最完整口径在此 chunk 第 5 条：抵扣部分退回积分账户且有效期不变，已过期则转为 30 天等价优惠券；refund_policy.md chunk 4 第 3 条只写了退回不写过期的处理。"
+    },
+    {
+      "id": 18,
+      "query": "订单已经发货了，拒收和在途拦截是一回事吗？要收费不？",
+      "query_type": "cross_topic",
+      "expected_document_id": "shipping_policy.md",
+      "expected_chunk_index": 5,
+      "note": "在途拦截条款在此 chunk：拦截服务费 5 元（偏远 10 元）、成功率约 90%、失败转拒收；拒收扣发货运费的细则在 refund_policy.md chunk 3。"
+    },
+    {
+      "id": 19,
+      "query": "铂金会员的退货免运费，7天无理由退货也能用吗？",
+      "query_type": "cross_topic",
+      "expected_document_id": "membership_policy.md",
+      "expected_chunk_index": 5,
+      "note": "权益细则在此 chunk 第 3 条：铂金每月 3 次自营商品免费上门取件退货（不含定制类），未限定退货原因；无理由退货默认运费自理的基线在 refund_policy.md chunk 2。"
+    },
+    {
+      "id": 20,
+      "query": "拆封了还能七天无理由退货吗？",
+      "query_type": "negation_condition",
+      "expected_document_id": "refund_policy.md",
+      "expected_chunk_index": 2,
+      "note": "完好性条件在此 chunk 第 2 条：主体未使用、包装附件齐全可退；数码类已激活或写入个人数据则不支持无理由退货。"
+    },
+    {
+      "id": 21,
+      "query": "自己不小心进水弄坏了，还在保修期内，能免费修吗？",
+      "query_type": "negation_condition",
+      "expected_document_id": "after_sales_policy.md",
+      "expected_chunk_index": 2,
+      "note": "第三章除外情况在此 chunk：进液属人为损坏不免费保修，可转付费维修、检测费 30 元且转维修可抵扣。"
+    },
+    {
+      "id": 22,
+      "query": "定制商品支持7天无理由退货吗？",
+      "query_type": "negation_condition",
+      "expected_document_id": "refund_policy.md",
+      "expected_chunk_index": 2,
+      "note": "该 chunk 第 3 条明文规定：定制类商品（如刻字机械键盘、定制内存配置的显示器）不支持 7 天无理由退货。"
+    },
+    {
+      "id": 23,
+      "query": "积分过期了还能用来抵扣吗",
+      "query_type": "negation_condition",
+      "expected_document_id": "membership_policy.md",
+      "expected_chunk_index": 4,
+      "note": "第五章「积分使用与抵扣」在此 chunk：第 4 条定义积分有效期 24 个月、到期前 30 天提醒（过期即不可用）；第 5 条规定退款退回时若积分已过期转为 30 天等价优惠券，处理规则也在此块。"
+    }
+  ]
+}

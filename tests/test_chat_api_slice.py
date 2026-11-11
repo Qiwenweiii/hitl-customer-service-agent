@@ -38,6 +38,7 @@ import app.data_loader as data_loader
 import app.main as app_module
 from app.agent import create_customer_service_agent
 from app.api.chat import ChatRequest, ChatResponse, create_chat_app
+from app.session_store import SessionStore
 
 ORDER_ID_PATTERN = re.compile(r"ORD-\d{4}-\d{4}")
 CHAT_URL = "/api/chat"
@@ -197,13 +198,31 @@ def real_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClien
     return _client(agent), model, copy_path
 
 
-def _ask(client: TestClient, message: str, thread_id: str | None = None) -> dict[str, Any]:
+def _ask(
+    client: TestClient,
+    message: str,
+    thread_id: str | None = None,
+    *,
+    session_token: str | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {"message": message}
     if thread_id is not None:
         payload["thread_id"] = thread_id
+    if session_token is not None:
+        payload["session_token"] = session_token
     response = client.post(CHAT_URL, json=payload)
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def _create_session(client: TestClient) -> tuple[str, str]:
+    """走分支 A 新建会话，返回 (thread_id, session_token)。
+
+    经 ``create_app`` 起的整站都注入了 SessionStore，续轮必须同时带这两个值，
+    这是会话归属契约：裸 thread_id 只会换来 403。
+    """
+    body = _ask(client, "你好")
+    return body["thread_id"], body["session_token"]
 
 
 def _post(client: TestClient, payload: Any) -> Any:
@@ -358,7 +377,11 @@ def test_whitespace_message_is_rejected_with_a_clear_field() -> None:
 def test_agent_and_checkpointer_are_created_once_at_startup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """启动期装一次，请求内不再装：三个请求共用同一个 Agent 与同一份 checkpointer。"""
+    """启动期装一次，请求内不再装：三个请求共用同一个 Agent 与同一份 checkpointer。
+
+    续轮必须携带 session_token，这是会话归属契约：create_app 注入的 SessionStore
+    会把裸 thread_id 的续轮挡在 403，所以先用不带 thread_id 的请求领一份凭据。
+    """
     built: list[tuple[Any, Any]] = []
 
     def fake_factory(model: Any = None, *, checkpointer: Any = None) -> RecordingAgent:
@@ -367,8 +390,14 @@ def test_agent_and_checkpointer_are_created_once_at_startup(
 
     monkeypatch.setattr(app_module, "create_customer_service_agent", fake_factory)
     client = TestClient(app_module.create_app())
-    for _ in range(3):
-        assert _ask(client, "订单 ORD-2026-0001 什么状态", "vip-1")["answer"] == ANSWER
+    thread_id, session_token = _create_session(client)
+    assert thread_id.startswith("chat-") and session_token
+    for _ in range(2):
+        body = _ask(
+            client, "订单 ORD-2026-0001 什么状态", thread_id, session_token=session_token
+        )
+        assert body["answer"] == ANSWER
+        assert body["thread_id"] == thread_id, "续轮复用的必须是同一会话，而非又新建一个"
 
     assert len(built) == 1, "Agent 必须只在应用启动时创建一次"
     assert built[0][0] is None, "默认不注入模型，构建真实模型的动作留在 graph.py"
@@ -378,7 +407,10 @@ def test_agent_and_checkpointer_are_created_once_at_startup(
 def test_explicit_checkpointer_is_the_one_every_request_uses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """注入的会话存储原样交给 Agent，且不被每请求替换掉。"""
+    """注入的会话存储原样交给 Agent，且不被每请求替换掉。
+
+    续轮同样必须携带 session_token（会话归属契约），本轮要证明的还是 checkpointer 的唯一性。
+    """
     saver = InMemorySaver()
     captured: list[Any] = []
 
@@ -388,8 +420,8 @@ def test_explicit_checkpointer_is_the_one_every_request_uses(
 
     monkeypatch.setattr(app_module, "create_customer_service_agent", fake_factory)
     client = TestClient(app_module.create_app(checkpointer=saver))
-    _ask(client, "你好", "vip-1")
-    _ask(client, "再问一次", "vip-1")
+    thread_id, session_token = _create_session(client)
+    _ask(client, "再问一次", thread_id, session_token=session_token)
 
     assert captured == [saver]
     assert captured[0] is saver
@@ -398,8 +430,8 @@ def test_explicit_checkpointer_is_the_one_every_request_uses(
 def test_create_app_hands_the_agent_to_the_route_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """组装只有一条链路：建 Agent → 交给 create_chat_app，不在别处第二次装路由。"""
-    seen: list[Any] = []
+    """组装只有一条链路：建 Agent → 连同 SessionStore 交给 create_chat_app，不在别处第二次装路由。"""
+    seen: list[tuple[Any, Any]] = []
     monkeypatch.setattr(
         app_module,
         "create_customer_service_agent",
@@ -408,10 +440,40 @@ def test_create_app_hands_the_agent_to_the_route_factory(
     monkeypatch.setattr(
         app_module,
         "create_chat_app",
-        lambda agent: seen.append(agent) or "the-app",
+        lambda agent, store: seen.append((agent, store)) or "the-app",
     )
     assert app_module.create_app() == "the-app"
-    assert seen == ["the-agent"]
+    assert [agent for agent, _store in seen] == ["the-agent"]
+    assert isinstance(seen[0][1], SessionStore), "路由工厂必须同时收到会话存储"
+
+
+def test_create_app_always_injects_a_session_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """生产入口守卫：create_app 注入的 session store 恒不为 None，封死「无校验路径」。
+
+    create_chat_app 的 ``session_store=None`` 分支仅供内部测试 seam 使用；
+    这里先用真实行为兜底：未签发的 thread_id 必被 403 挡住；再从组装点捕获实参。
+    """
+    client = TestClient(app_module.create_app(model=StubModel()))
+    response = client.post(CHAT_URL, json={"message": "你好", "thread_id": "never-issued"})
+    assert response.status_code == 403, "生产路径必须强制会话归属校验，未经签发的 thread 不能进 Agent"
+
+    captured: list[Any] = []
+    monkeypatch.setattr(
+        app_module,
+        "create_customer_service_agent",
+        lambda model=None, *, checkpointer=None: RecordingAgent(_result(ANSWER)),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "create_chat_app",
+        lambda agent, store: captured.append(store) or FastAPI(),
+    )
+    app_module.create_app()
+    assert len(captured) == 1 and isinstance(captured[0], SessionStore), (
+        "生产入口不得以 session_store=None 组装路由"
+    )
 
 
 def test_created_app_answers_and_keeps_memory_without_a_real_model() -> None:
@@ -419,10 +481,13 @@ def test_created_app_answers_and_keeps_memory_without_a_real_model() -> None:
 
     第二轮数得出「第 2 轮」同时否证了每请求新建 Agent：
     那样每轮都配一份全新的 InMemorySaver，轮次永远停在第 1 轮。
+    续轮携带第一轮签发的 session_token，这是会话归属契约。
     """
     client = TestClient(app_module.create_app(StubModel()))
     first = _ask(client, "你好")
-    second = _ask(client, "再问一次", first["thread_id"])
+    second = _ask(
+        client, "再问一次", first["thread_id"], session_token=first["session_token"]
+    )
     assert first["answer"] == "第 1 轮提问：你好"
     assert second["answer"] == "第 2 轮提问：再问一次"
     assert second["thread_id"] == first["thread_id"]
@@ -577,6 +642,34 @@ def test_api_reuses_the_shared_text_extractor() -> None:
     assert chat_module.stream_text.__module__ == "app.agent.streaming"
 
 
-def test_response_contract_is_exactly_two_strings() -> None:
-    assert list(ChatResponse.model_fields) == ["answer", "thread_id"]
-    assert list(ChatRequest.model_fields) == ["message", "thread_id"]
+def test_response_contract_fields_follow_create_and_continue() -> None:
+    """契约字段清单 + exclude_none 的向后兼容证明。
+
+    新建会话响应有三个字段（answer/thread_id/session_token）；
+    续轮响应只剩两个（answer/thread_id）——session_token 为 None 时被
+    ``response_model_exclude_none`` 剔除，老客户端看到的响应体形态与 VS1 一致。
+    字段清单断言保证以后不会有人再加第四个静默字段。
+    """
+    assert list(ChatRequest.model_fields) == ["message", "thread_id", "session_token"]
+    assert list(ChatResponse.model_fields) == ["answer", "thread_id", "session_token"]
+
+    client = TestClient(create_chat_app(RecordingAgent(), SessionStore()))
+    created = client.post(CHAT_URL, json={"message": "你好"})
+    assert created.status_code == 200
+    created_body = created.json()
+    assert set(created_body) == {"answer", "thread_id", "session_token"}
+    assert created_body["session_token"], "新建会话必须回显凭据，否则客户端接不上续轮"
+
+    continued = client.post(
+        CHAT_URL,
+        json={
+            "message": "再问一次",
+            "thread_id": created_body["thread_id"],
+            "session_token": created_body["session_token"],
+        },
+    )
+    assert continued.status_code == 200
+    assert set(continued.json()) == {"answer", "thread_id"}
+    assert "session_token" not in continued.json(), (
+        "续轮不该再回显凭据（哪怕是 null）：exclude_none 必须生效"
+    )

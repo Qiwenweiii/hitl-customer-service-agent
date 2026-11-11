@@ -20,3 +20,10 @@ data/_backup-*/
 .idea/
 .vscode/
 .DS_Store
+
+# 个人过程性文档与本地备份（不推送远程仓库）
+TODO.md
+skill_todo.md
+docs/skill-mechanism.md
+docs/*.png
+*.bak

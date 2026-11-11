@@ -11,6 +11,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from app.config import LLM_API_KEY, LLM_BASE_URL, LLM_EXTRA_BODY, LLM_MODEL
+from app.skills.middleware import SkillMiddleware
 from app.tools.logistics_tools import query_logistics
 from app.tools.order_tools import cancel_order, query_order
 from app.tools.rag_tools import search_knowledge
@@ -173,4 +174,5 @@ def create_customer_service_agent(
         tools=TOOLS,
         system_prompt=SYSTEM_PROMPT,
         checkpointer=checkpointer,
+        middleware=[SkillMiddleware()],
     )

@@ -36,8 +36,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 import app.agent.streaming as streaming_module
 import app.api.chat as chat_module
 from app.agent import create_customer_service_agent
-from app.api.chat import THREAD_ID_HEADER, create_chat_app
+from app.api.chat import SESSION_TOKEN_HEADER, THREAD_ID_HEADER, create_chat_app
 from app.main import create_app
+from app.session_store import SessionStore
 
 CHAT_URL = "/api/chat"
 SSE_HEADERS = {"Accept": "text/event-stream"}
@@ -213,13 +214,20 @@ def _ask_stream(
     message: str,
     thread_id: str | None = None,
     *,
+    session_token: str | None = None,
     headers: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """发一次流式请求（默认就带上 SSE 的 Accept 头），返回状态码、响应头、原始正文与解析后的事件。"""
+    """发一次流式请求（默认就带上 SSE 的 Accept 头），返回状态码、响应头、原始正文与解析后的事件。
+
+    经 ``create_app``/注入了 SessionStore 的客户端续轮时须带 session_token（会话归属契约）；
+    无 store 的假 Agent 客户端（``_client(agent)``）走老契约 seam，不需要它。
+    """
     payload: dict[str, Any] = {"message": message}
     if thread_id is not None:
         payload["thread_id"] = thread_id
+    if session_token is not None:
+        payload["session_token"] = session_token
     with client.stream(
         "POST", CHAT_URL, json=payload, headers=headers or SSE_HEADERS, **kwargs
     ) as response:
@@ -560,11 +568,40 @@ def test_stream_driver_yields_only_displayable_text() -> None:
 
 
 def test_streaming_adds_no_endpoint_and_no_request_field() -> None:
-    """VS3 不新增端点也不改 ChatRequest：一条 URL、两个请求字段、两个响应字段。"""
+    """VS3 不新增端点；会话凭据只扩了字段清单：一条 URL、三个请求字段、三个响应字段。
+
+    ``X-Session-Token`` 响应头只在新建会话的流上出现；续轮响应头里没有它。
+    「不新增端点」的断言保留——本轮确实没有新增端点。
+    """
     app: FastAPI = create_chat_app(ScriptedStreamAgent(_chunks("答复。")))
     assert [r.path for r in app.routes if r.path.startswith("/api/")] == [CHAT_URL]
-    assert list(chat_module.ChatRequest.model_fields) == ["message", "thread_id"]
-    assert list(chat_module.ChatResponse.model_fields) == ["answer", "thread_id"]
+    assert list(chat_module.ChatRequest.model_fields) == [
+        "message",
+        "thread_id",
+        "session_token",
+    ]
+    assert list(chat_module.ChatResponse.model_fields) == [
+        "answer",
+        "thread_id",
+        "session_token",
+    ]
+
+    client = TestClient(create_chat_app(ScriptedStreamAgent(_chunks("答复。")), SessionStore()))
+    created = _ask_stream(client, "你好")
+    assert created["headers"][THREAD_ID_HEADER].startswith("chat-")
+    token = created["headers"][SESSION_TOKEN_HEADER]
+    assert token, "新建会话的流必须用响应头回显凭据，否则客户端接不上续轮"
+
+    continued = _ask_stream(
+        client,
+        "再问一次",
+        created["headers"][THREAD_ID_HEADER],
+        session_token=token,
+    )
+    assert SESSION_TOKEN_HEADER not in continued["headers"], (
+        "凭据只在签发那一次回显，续轮响应头里不能再出现它"
+    )
+    assert continued["headers"][THREAD_ID_HEADER] == created["headers"][THREAD_ID_HEADER]
 
 
 def test_exactly_three_stream_event_names_reach_the_wire() -> None:

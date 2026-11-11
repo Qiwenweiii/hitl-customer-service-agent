@@ -11,7 +11,13 @@
 同一个 ``thread_id`` 的多次请求共享短期记忆（以及待人工确认的状态），不同线程互不可见。
 客户端没带 ``thread_id`` 时服务端新建一个并在响应里回显，下一轮带上它即可续上同一会话。
 
-本版本（VS1）刻意没有的能力：流式输出、人工确认（HITL）、认证、前端。
+会话归属校验（注入 ``session_store`` 后生效）：新建会话时签发一次性 ``session_token``
+（JSON 响应体回显；SSE 用响应头 ``X-Session-Token``），续轮必须同时带 thread_id 与它。
+未知 thread、凭据缺失或不符一律同一个 403，不透露 thread 是否存在；
+校验失败绝不签发、绝不轮换——``issue()`` 只允许出现在新建会话分支（见 chat 处理函数内的标注）。
+
+本版本（VS1）刻意没有的能力：流式输出、人工确认（HITL）、用户身份认证、前端。
+会话归属凭据（session_token）已接入：它只保证「凭据持有者才能续写该会话」，不是用户身份认证。
 其中人工确认是唯一需要显式拒绝的：用户可能在 ``message`` 里直接要求取消订单，
 此时图会停在待确认状态，而本端点没有回答确认问题的能力，因此返回 501 明确拒绝，
 而不是回一条空 ``answer`` 让客户端以为处理过了。
@@ -46,6 +52,7 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agent.streaming import pending_confirmation, stream_answer, stream_text
+from app.session_store import SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +73,12 @@ THREAD_ID_HEADER = "X-Thread-Id"
 # 流式出错时给客户端的一句话：异常原文可能含模型名、端点地址等内部信息，不进响应。
 STREAM_ERROR_MESSAGE = "服务处理本轮请求时出错，本轮答复已中断，请稍后重试。"
 
+# 会话凭据的回显头：与 X-Thread-Id 同理，SSE 正文没有承载它的字段。
+SESSION_TOKEN_HEADER = "X-Session-Token"
+# 分支 B（thread 未知）与分支 C（凭据不符）共用一条文案：
+# 不能让客户端通过错误差异探测某个 thread_id 是否存在。
+SESSION_FORBIDDEN_DETAIL = "会话凭据缺失或不正确，本次请求无法访问该会话。请新建会话（请求不带 thread_id）。"
+
 
 class ChatRequest(BaseModel):
     """一轮对话的请求体。
@@ -84,6 +97,10 @@ class ChatRequest(BaseModel):
     thread_id: str | None = Field(
         default=None,
         description="会话 id（即 LangGraph thread_id）。省略则新建会话，服务端在响应里回显该 id。",
+    )
+    session_token: str | None = Field(
+        default=None,
+        description="会话凭据：新建会话时由服务端签发并回显；携带 thread_id 追问时必须原样带上。",
     )
 
     @field_validator("message")
@@ -104,12 +121,30 @@ class ChatRequest(BaseModel):
             raise ValueError("thread_id 不能是空白字符串；需要新会话时请省略该字段")
         return stripped
 
+    @field_validator("session_token")
+    @classmethod
+    def _reject_blank_session_token(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("session_token 不能是空白字符串；没有凭据时请省略该字段")
+        return stripped
+
 
 class ChatResponse(BaseModel):
-    """一轮对话的响应体：只有面向用户的答复与会话 id，不含工具调用等内部结构。"""
+    """一轮对话的响应体：面向用户的答复、会话 id，以及新建会话时一次性回显的会话凭据。
+
+    ``session_token`` 只在本次请求走了新建会话分支时非空；``None`` 会被路由的
+    ``response_model_exclude_none`` 从响应体里剔除，续轮老客户端看到的契约不变。
+    """
 
     answer: str = Field(description="客服答复正文，取自本轮最后一条 AI 消息")
     thread_id: str = Field(description="本轮使用的会话 id，下一轮请求带上它即可延续上下文")
+    session_token: str | None = Field(
+        default=None,
+        description="新建会话时签发的会话凭据，仅此一次明文回显；续轮请求须携带它。",
+    )
 
 
 def new_thread_id() -> str:
@@ -165,14 +200,20 @@ def _stream_events(agent: Any, message: str, config: dict) -> Iterator[str]:
         yield _sse_event("error", {"message": STREAM_ERROR_MESSAGE})
 
 
-def create_chat_app(agent: Any) -> FastAPI:
-    """用注入的 Agent 构建 API 应用。
+def create_chat_app(agent: Any, session_store: SessionStore | None = None) -> FastAPI:
+    """用注入的 Agent 与会话存储构建 API 应用。
 
     Args:
         agent: 客服 Agent（``create_customer_service_agent`` 的返回值）。同步分支用 ``invoke``，
             流式分支用 ``stream(stream_mode="messages")``，并在每条流收尾时读一次 ``get_state``
             判断线程是否停在待确认点。测试可注入假 Agent，这三个方法分别打桩即可，不需要真实大模型。
             调用方负责给它配好 checkpointer，否则 ``thread_id`` 不生效：每轮都是全新上下文。
+        session_store: 会话归属存储（``app.session_store.SessionStore``）。注入后按 A-D 分支强制校验：
+            A 不带 thread_id → 新建会话并签发 token；
+            B 带 thread_id 但 ``has()`` 为 False → 403（不透露该 thread 是否存在，绝不签发）；
+            C 带 thread_id、``has()`` 为 True，但 ``session_token`` 缺失或校验失败 → 403（绝不签发、绝不轮换）；
+            D 校验通过 → 照常调用 Agent。
+            为 None 时跳过会话校验层（既有假 Agent 测试与脚本仍走这条老契约 seam）。
 
     Returns:
         暴露 ``POST /api/chat`` 的 FastAPI 应用。
@@ -188,19 +229,50 @@ def create_chat_app(agent: Any) -> FastAPI:
     # 不伪装成 async（图本身没有 await 能力）。
     # 返回 StreamingResponse 时它是个 Response 实例，FastAPI 不会再用 response_model 去校验它，
     # 所以 response_model 保留为同步分支的 JSON 契约。
-    @app.post("/api/chat", response_model=ChatResponse, summary="对话（一轮问答，JSON 或 SSE 流）")
+    # exclude_none：session_token 只在分支 A 出现，续轮与无 store 老契约的响应体不多一个 null 字段。
+    @app.post(
+        "/api/chat",
+        response_model=ChatResponse,
+        response_model_exclude_none=True,
+        summary="对话（一轮问答，JSON 或 SSE 流）",
+    )
     def chat(payload: ChatRequest, request: Request) -> ChatResponse | StreamingResponse:
-        thread_id = payload.thread_id or new_thread_id()
+        session_token: str | None = None
+        if payload.thread_id is None:
+            # 分支 A：新建会话。issue() 在全模块只允许出现在这一处——
+            # 分支 B/C 绝不能 fallback 到 issue 去「救」一个校验失败的请求，
+            # 否则任意伪造的 thread_id 都能当场领到合法凭据，归属校验形同虚设。
+            thread_id = new_thread_id()
+            if session_store is not None:
+                session_token = session_store.issue(thread_id)
+        elif session_store is not None:
+            # 分支 B/C：未知 thread 与凭据缺失/不符共用一条 403 文案，
+            # 不让客户端分辨该 thread 是否存在；这里绝不签发、绝不轮换已有 token。
+            thread_id = payload.thread_id
+            if not session_store.has(thread_id) or not session_store.verify(
+                thread_id, payload.session_token
+            ):
+                raise HTTPException(status_code=403, detail=SESSION_FORBIDDEN_DETAIL)
+        else:
+            # session_store=None 的 seam 仅用于内部测试（假 Agent 直连路由的老契约）；
+            # 生产入口 create_app 必注入 SessionStore，见守卫测试
+            # tests/test_chat_api_slice.py::test_create_app_always_injects_a_session_store。
+            thread_id = payload.thread_id
+
+        # 分支 D：会话归属确认（或无 store 的老契约）通过后，才把请求交给 Agent。
         config = build_config(thread_id)
         if _wants_event_stream(request):
+            headers = {THREAD_ID_HEADER: thread_id, "Cache-Control": "no-cache"}
+            if session_token is not None:
+                headers[SESSION_TOKEN_HEADER] = session_token
             return StreamingResponse(
                 _stream_events(agent, payload.message, config),
                 media_type=MEDIA_TYPE_EVENT_STREAM,
-                headers={THREAD_ID_HEADER: thread_id, "Cache-Control": "no-cache"},
+                headers=headers,
             )
         result = agent.invoke({"messages": [HumanMessage(payload.message)]}, config)
         if result.get("__interrupt__"):
             raise HTTPException(status_code=501, detail=HITL_NOT_SUPPORTED_DETAIL)
-        return ChatResponse(answer=_answer_of(result), thread_id=thread_id)
+        return ChatResponse(answer=_answer_of(result), thread_id=thread_id, session_token=session_token)
 
     return app
